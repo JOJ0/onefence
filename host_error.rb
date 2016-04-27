@@ -57,29 +57,25 @@ include OpenNebula
 
 require 'getoptlong'
 
-# jojo: needed for executing shell commands
+# needed for executing shell commands
 require "CommandManager"
-# jojo: for debugging purposes
-require "pp"
 
-
-# jojo: for parsing host templae and reading xml
+# for parsing host template and reading xml
 require 'base64'
 require 'nokogiri'
 
-# jojo: logging to syslog
+# logging to syslog
 require 'syslog'
 
 def slog(message)
     Syslog.open("OpenNebula "+$0.split("/").last, Syslog::LOG_PID | Syslog::LOG_CONS) { |s| s.notice message }
 end
 
-
 if !(host_id=ARGV[0])
     exit -1
 end
 
-# jojo: get IPMI data from $TEMPLATE (see oned.conf from where this script is called!)
+# we're getting IPMI credentials from $TEMPLATE (see host failure configuration in oned.conf)
 if !(host_template=ARGV[1])
 	exit -1
 end
@@ -125,57 +121,9 @@ end
 # Retrieve hostname
 host  =  OpenNebula::Host.new_with_id(host_id, client)
 
-# jojo: retrieve host object lil different: crap???
-#xml=OpenNebula::Host.build_xml
-#host=OpenNebula::Host.new(xml, client)
-
 rc = host.info
 exit -1 if OpenNebula.is_error?(rc)
 host_name = host.name
-
-# jojo: trying to get ipmi data from host instance....
-
-#meth = host.methods
-#string = pp(meth)
-#for i in string
-#  command = LocalCommand.run("echo \"pp methods i: " + i + "\" >> /var/lib/one/roland")
-#end
-# Error: can't convert Symbol into String (TypeError)
-
-#host_info = pp(host.info)
-# error nil
-
-#command=LocalCommand.run("echo \"pp host: " + host_info + "\" >> /var/lib/one/roland")
-#for i in host_info
-#  command=LocalCommand.run("echo \"pp host.info i: " + i + "\" >> /var/lib/one/roland")
-#end
-# + i +
-# Error : undefined method `each' for nil:NilClass (NoMethodError)
-
-# host_info = pp(host) -> for ...
-# Tue Apr  5 16:55:00 2016 [Z0][HKM][D]: Message received: LOG I 7 /usr/lib/one/ruby/opennebula/xml_element.rb:192:in `each': wrong number of arguments (0 for 1) (ArgumentError)
-
-# host_info = pp(host)
-# gibt was zurück!!!!!
-#Message received:  @client=
-#
-#Tue Apr  5 17:07:05 2016 [Z0][HKM][D]: Message received:   #<OpenNebula::Client:0x0000000286b508
-#Tue Apr  5 17:07:05 2016 [Z0][HKM][D]: Message received:    @async=true,
-#Tue Apr  5 17:07:05 2016 [Z0][HKM][D]: Message received:    @one_auth="oneadmin:arnedWimVaf2",
-#Tue Apr  5 17:07:05 2016 [Z0][HKM][D]: Message received:    @one_endpoint="http://localhost:2633/RPC2",
-
-
-#host_info = pp(host.@xml)
-#Tue Apr  5 17:30:15 2016 [Z0][HKM][D]: Message received: LOG I 7 /var/lib/one/remotes//hooks/ft/host_error.rb:144: syntax error, unexpected tIVAR
-#Tue Apr  5 17:30:15 2016 [Z0][HKM][D]: Message received: LOG I 7 host_info = pp(host.@xml)
-#Tue Apr  5 17:30:15 2016 [Z0][HKM][D]: Message received: LOG I 7 ^
-#Tue Apr  5 17:30:15 2016 [Z0][HKM][D]: Message received: LOG I 7 ExitCode: 1
-#Tue Apr  5 17:30:15 2016 [Z0][HKM][D]: Message received: EXECUTE FAILURE 7 error: -
-
-# from cli, require error :-/ /usr/lib/ruby/1.9.1/rubygems/custom_require.rb:36:in `require': cannot load such file -- one_helper (LoadError) 
-# probably because of sub path cli
-#hosthelper=OneHostHelper.new()
-#host_info = pp(hosthelper)
 
 
 #### configure fencing START ######################
@@ -198,7 +146,6 @@ fence_timeout="5"
 host_template_decoded=Base64.decode64(host_template)
 # create xml object
 xml=Nokogiri::Slop(host_template_decoded)
-#host_info = pp(xml.methods)
 # retrieve necessary data for fencing command from host template
 ipmi_ip=xml.HOST.TEMPLATE.IPMI_IP.content
 ipmi_user=xml.HOST.TEMPLATE.IPMI_USER.content
@@ -218,49 +165,35 @@ if repeat
     exit 0 if host.state != 3
 end
 
-#jojo: the actual fence command
-fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
 
-#methods = pp(fence_cmd.public_methods)
-#puts("executing fence command: " + fence_cmd.command)
+# the actual fence command
+fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l X"+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
+
+slog("#{host_name}(#{host_id}) NOTICE: executing fence command: " + fence_cmd.command)
 
 fence_successful=false
 fence_tried=0
-#puts "DEBUG: FIRST PUTS, BEFORE WHILE LOOP"
-#puts "DEBUG: BEFORE WHILE LOOP"
 while fence_successful != true
 
     if fence_tried > fence_retry
-       #puts("tried fence command "+(fence_tried-1).to_s+" times, giving up!") 
-       #STDOUT.flush
        slog("#{host_name}(#{host_id}) ERROR: tried fence command "+(fence_tried-1).to_s+" times, giving up!") 
        break
     end
 
     fence_cmd.run
-    #STDOUT.flush
     
     if fence_cmd.stdout.include?("Failed")
-    #    #puts("fence command returned error code "+fence_cmd.code.to_s+", message was: "+fence_cmd.get_error_message+", stdout was: "+fence_cmd.stdout)
-        #puts("fence command not successful, stdout was: "+fence_cmd.stdout)
-    #    #STDOUT.flush
         slog("#{host_name}(#{host_id}) ERROR: fence command not successful, stdout was: "+fence_cmd.stdout)
     else
-        #puts("fence command successful, stdout was: "+fence_cmd.stdout)
-    #    #STDOUT.flush
-        slog("#{host_name}(#{host_id}) ERROR: fence command successful, stdout was: "+fence_cmd.stdout)
+        slog("#{host_name}(#{host_id}) NOTICE: fence command successful, stdout was: "+fence_cmd.stdout)
         fence_successful=true
         break
     end
-    #puts("DEBUG: INSIDE WHILE LOOP")
     fence_tried+=1
     sleep fence_retry_wait
-    #STDOUT.flush
     
 end
-#puts "DEBUG: AFTER WHILE LOOP"
     
-
 
 # Loop through all vms
 vms = VirtualMachinePool.new(client)
