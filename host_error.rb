@@ -219,15 +219,15 @@ if repeat
 end
 
 #jojo: the actual fence command
-fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l X"+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
+fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
 
 #methods = pp(fence_cmd.public_methods)
 #puts("executing fence command: " + fence_cmd.command)
 
 fence_successful=false
 fence_tried=0
-puts "DEBUG: FIRST PUTS, BEFORE WHILE LOOP"
-puts "DEBUG: BEFORE WHILE LOOP"
+#puts "DEBUG: FIRST PUTS, BEFORE WHILE LOOP"
+#puts "DEBUG: BEFORE WHILE LOOP"
 while fence_successful != true
 
     if fence_tried > fence_retry
@@ -237,26 +237,26 @@ while fence_successful != true
        break
     end
 
-    #fence_cmd.run
+    fence_cmd.run
     #STDOUT.flush
     
-    #if fence_cmd.stdout.include?("Failed")
+    if fence_cmd.stdout.include?("Failed")
     #    #puts("fence command returned error code "+fence_cmd.code.to_s+", message was: "+fence_cmd.get_error_message+", stdout was: "+fence_cmd.stdout)
-    #    puts("fence command not successful, stdout was: "+fence_cmd.stdout)
+        puts("fence command not successful, stdout was: "+fence_cmd.stdout)
     #    #STDOUT.flush
-    #else
-    #    puts("fence command successful, stdout was: "+fence_cmd.stdout)
+    else
+        puts("fence command successful, stdout was: "+fence_cmd.stdout)
     #    #STDOUT.flush
-    #    fence_successful=true
-    #    break
-    #end
-    puts("DEBUG: INSIDE WHILE LOOP")
+        fence_successful=true
+        break
+    end
+    #puts("DEBUG: INSIDE WHILE LOOP")
     fence_tried+=1
     sleep fence_retry_wait
     #STDOUT.flush
     
 end
-puts "DEBUG: AFTER WHILE LOOP"
+#puts "DEBUG: AFTER WHILE LOOP"
     
 
 
