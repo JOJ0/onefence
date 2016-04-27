@@ -130,7 +130,7 @@ host_name = host.name
 # which fence agent to use
 fence_agent="/usr/sbin/fence_ipmilan"
 # retry fence action this many times if unsucessful
-fence_retry=3
+fence_retries=3
 # wait this many seconds between retries
 fence_retry_wait=10
 # onoff or cycle
@@ -169,29 +169,30 @@ end
 # the actual fence command
 fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l X"+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
 
-slog("#{host_name}(#{host_id}) NOTICE: executing fence command: " + fence_cmd.command)
+#slog("#{host_name}(#{host_id}) DEBUG: fence command: " + fence_cmd.command)
 
 fence_successful=false
-fence_tried=0
+fence_try=1
 while fence_successful != true
-
-    if fence_tried > fence_retry
-       slog("#{host_name}(#{host_id}) ERROR: tried fence command "+(fence_tried-1).to_s+" times, giving up!") 
-       break
-    end
 
     fence_cmd.run
     
     if fence_cmd.stdout.include?("Failed")
-        slog("#{host_name}(#{host_id}) ERROR: fence command not successful, stdout was: "+fence_cmd.stdout)
+        slog("#{host_name}(#{host_id}) ERROR: fence command not successful, output was: "+fence_cmd.stdout)
     else
-        slog("#{host_name}(#{host_id}) NOTICE: fence command successful, stdout was: "+fence_cmd.stdout)
+        slog("#{host_name}(#{host_id}) NOTICE: node was fenced, output was: "+fence_cmd.stdout)
         fence_successful=true
         break
     end
-    fence_tried+=1
+    #slog("#{host_name}(#{host_id}) DEBUG: executed "+fence_try.to_s+" times!")
+
+    if fence_try == fence_retries
+       slog("#{host_name}(#{host_id}) ERROR: tried fence command "+fence_try.to_s+" times, giving up!") 
+       break
+    end
+
+    fence_try+=1
     sleep fence_retry_wait
-    
 end
     
 
