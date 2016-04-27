@@ -231,9 +231,9 @@ fence_tried=0
 while fence_successful != true
 
     if fence_tried > fence_retry
-       #slog("#{host_name}(#{host_id}) ERROR: tried fence command "+(fence_tried-1).to_s+" times, giving up!") 
-       puts("tried fence command "+(fence_tried-1).to_s+" times, giving up!") 
+       #puts("tried fence command "+(fence_tried-1).to_s+" times, giving up!") 
        #STDOUT.flush
+       slog("#{host_name}(#{host_id}) ERROR: tried fence command "+(fence_tried-1).to_s+" times, giving up!") 
        break
     end
 
@@ -242,11 +242,13 @@ while fence_successful != true
     
     if fence_cmd.stdout.include?("Failed")
     #    #puts("fence command returned error code "+fence_cmd.code.to_s+", message was: "+fence_cmd.get_error_message+", stdout was: "+fence_cmd.stdout)
-        puts("fence command not successful, stdout was: "+fence_cmd.stdout)
+        #puts("fence command not successful, stdout was: "+fence_cmd.stdout)
     #    #STDOUT.flush
+        slog("#{host_name}(#{host_id}) ERROR: fence command not successful, stdout was: "+fence_cmd.stdout)
     else
-        puts("fence command successful, stdout was: "+fence_cmd.stdout)
+        #puts("fence command successful, stdout was: "+fence_cmd.stdout)
     #    #STDOUT.flush
+        slog("#{host_name}(#{host_id}) ERROR: fence command successful, stdout was: "+fence_cmd.stdout)
         fence_successful=true
         break
     end
