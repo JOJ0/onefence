@@ -170,8 +170,8 @@ fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l X"+ipmi_user+" -p 
 #slog("#{host_name}(#{host_id}) DEBUG: fencing command: " + fence_cmd.command)
 
 fence_successful=false
-fence_try=1
-while fence_try <= fence_retries
+fence_try=0
+while fence_try < fence_retries
 
     #slog("#{host_name}(#{host_id}) NOTICE executing fencing command: " + fence_cmd.command)
     fence_cmd.run
@@ -186,13 +186,11 @@ while fence_try <= fence_retries
     #slog("#{host_name}(#{host_id}) DEBUG: executed "+fence_try.to_s+" times!")
 
     fence_try+=1
-    sleep fence_retry_wait
+    sleep fence_retry_wait if fence_try < fence_retries
 end
 
-#slog("#{host_name}(#{host_id}) DEBUG: fence_try var: "+fence_try.to_s+"")
-
-if fence_try > fence_retries and fence_successful == false
-    slog("#{host_name}(#{host_id}) ERROR: tried fencing command "+(fence_try-1).to_s+" times, giving up! Please reboot machine manually, then reschedule VMs!")
+if fence_try == fence_retries
+    slog("#{host_name}(#{host_id}) ERROR: tried fencing command "+fence_retries.to_s+" times, giving up! Please reboot machine manually, then reschedule VMs!")
     exit -1
 end
 
