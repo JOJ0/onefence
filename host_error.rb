@@ -128,7 +128,7 @@ host_name = host.name
 # which fence agent to use
 fence_agent="/usr/sbin/fence_ipmilan"
 # retry fence action this many times if unsucessful
-fence_retries=3
+fence_max_retries=3
 # wait this many seconds between retries
 fence_retry_wait=10
 # onoff or cycle
@@ -167,30 +167,24 @@ end
 # the actual fencing command
 fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l X"+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
 
-#slog("#{host_name}(#{host_id}) DEBUG: fencing command: " + fence_cmd.command)
-
-fence_successful=false
 fence_try=0
-while fence_try < fence_retries
+while fence_try < fence_max_retries
 
-    #slog("#{host_name}(#{host_id}) NOTICE executing fencing command: " + fence_cmd.command)
     fence_cmd.run
 
     if fence_cmd.stdout.include?("Failed")
         slog("#{host_name}(#{host_id}) ERROR: fencing command not successful, output was: "+fence_cmd.stdout)
     else
         slog("#{host_name}(#{host_id}) NOTICE: node was fenced, output was: "+fence_cmd.stdout)
-        fence_successful=true
         break
     end
-    #slog("#{host_name}(#{host_id}) DEBUG: executed "+fence_try.to_s+" times!")
 
     fence_try+=1
-    sleep fence_retry_wait if fence_try < fence_retries
+    sleep fence_retry_wait if fence_try < fence_max_retries
 end
 
-if fence_try == fence_retries
-    slog("#{host_name}(#{host_id}) ERROR: tried fencing command "+fence_retries.to_s+" times, giving up! Please reboot machine manually, then reschedule VMs!")
+if fence_try == fence_max_retries
+    slog("#{host_name}(#{host_id}) ERROR: tried fencing command "+fence_max_retries.to_s+" times, giving up! Please reboot machine manually, then reschedule VMs!")
     exit -1
 end
 
