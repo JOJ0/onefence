@@ -49,7 +49,6 @@ else
     CONFIG_FILE=ONE_LOCATION+"/var/config"
 end
 
-
 $: << RUBY_LIB_LOCATION
 
 require 'opennebula'
@@ -120,7 +119,6 @@ end
 
 # Retrieve hostname
 host  =  OpenNebula::Host.new_with_id(host_id, client)
-
 rc = host.info
 exit -1 if OpenNebula.is_error?(rc)
 host_name = host.name
@@ -135,7 +133,7 @@ fence_retries=3
 fence_retry_wait=10
 # onoff or cycle
 fence_method="cycle"
-# -T Wait X seconds after on/off operation (Default Value: 2), set to 4 for HP iLO 3 
+# -T Wait X seconds after on/off operation (Default Value: 2), set to 4 for HP iLO 3
 fence_wait="2"
 # fence_timeout (-t Timeout (sec) for IPMI operation)
 fence_timeout="5"
@@ -166,19 +164,20 @@ if repeat
 end
 
 
-# the actual fence command
+# the actual fencing command
 fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l X"+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
 
-#slog("#{host_name}(#{host_id}) DEBUG: fence command: " + fence_cmd.command)
+#slog("#{host_name}(#{host_id}) DEBUG: fencing command: " + fence_cmd.command)
 
 fence_successful=false
 fence_try=1
-while fence_successful != true
+while fence_try <= fence_retries
 
+    #slog("#{host_name}(#{host_id}) NOTICE executing fencing command: " + fence_cmd.command)
     fence_cmd.run
-    
+
     if fence_cmd.stdout.include?("Failed")
-        slog("#{host_name}(#{host_id}) ERROR: fence command not successful, output was: "+fence_cmd.stdout)
+        slog("#{host_name}(#{host_id}) ERROR: fencing command not successful, output was: "+fence_cmd.stdout)
     else
         slog("#{host_name}(#{host_id}) NOTICE: node was fenced, output was: "+fence_cmd.stdout)
         fence_successful=true
@@ -186,15 +185,16 @@ while fence_successful != true
     end
     #slog("#{host_name}(#{host_id}) DEBUG: executed "+fence_try.to_s+" times!")
 
-    if fence_try == fence_retries
-       slog("#{host_name}(#{host_id}) ERROR: tried fence command "+fence_try.to_s+" times, giving up!") 
-       break
-    end
-
     fence_try+=1
     sleep fence_retry_wait
 end
-    
+
+#slog("#{host_name}(#{host_id}) DEBUG: fence_try var: "+fence_try.to_s+"")
+
+if fence_try > fence_retries and fence_successful == false
+    slog("#{host_name}(#{host_id}) ERROR: tried fencing command "+(fence_try-1).to_s+" times, giving up! Please reboot machine manually, then reschedule VMs!")
+    exit -1
+end
 
 # Loop through all vms
 vms = VirtualMachinePool.new(client)
