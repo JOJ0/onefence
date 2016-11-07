@@ -62,6 +62,7 @@ require "CommandManager"
 # for parsing host template and reading xml
 require 'base64'
 require 'nokogiri'
+require 'pp'
 
 # logging to syslog
 require 'syslog'
@@ -123,9 +124,28 @@ rc = host.info
 exit -1 if OpenNebula.is_error?(rc)
 host_name = host.name
 
+# Retrieve ipmi data for fencing operation (retrieve_elements returns array), if incomplete log error and exit 
+ipmi_ip=host.retrieve_elements("//HOST/TEMPLATE/IPMI_IP")
+ipmi_user=host.retrieve_elements("//HOST/TEMPLATE/IPMI_USER")
+ipmi_pass=host.retrieve_elements("//HOST/TEMPLATE/IPMI_PASS")
+
+if ipmi_ip == nil or ipmi_user == nil or ipmi_pass == nil
+    slog("#{host_name}(#{host_id}) ERROR: node is about to be fenced, but ipmi data in host template is incomplete! ipmi_ip=#{ipmi_ip.to_s}, ipmi_user=#{ipmi_user.to_s}, ipmi_pass=#{ipmi_pass.to_s}")
+    exit 1
+else
+    slog("#{host_name}(#{host_id}) NOTICE: node is going to be fenced. ipmi_ip=#{ipmi_ip.to_s}, ipmi_user=#{ipmi_user.to_s}, ipmi_pass=#{ipmi_pass.to_s}")
+    ipmi_ip=ipmi_ip[0].to_s
+    ipmi_user=ipmi_user[0].to_s
+    ipmi_pass=ipmi_pass[0].to_s
+end
+
+
+#
+#xpath = "/VM_POOL/VM[#{state}]/HISTORY_RECORDS/HISTORY[HOSTNAME=\"#{host.name}\" and last()]"
+#vm_ids_array = vms.retrieve_elements("#{xpath}/../../ID")
 
 #### configure fencing START ######################
-# which fence agent to use
+# which fence agent to use, FIXME check if fence_ipmilan is installed (binary exists?)
 fence_agent="/usr/sbin/fence_ipmilan"
 # retry fence action this many times if unsucessful
 fence_max_retries=3
@@ -134,21 +154,13 @@ fence_retry_wait=10
 # onoff or cycle
 fence_method="cycle"
 # -T Wait X seconds after on/off operation (Default Value: 2), set to 4 for HP iLO 3
-fence_wait="2"
+fence_wait="4"
 # fence_timeout (-t Timeout (sec) for IPMI operation)
 fence_timeout="5"
 #### configure fencing STOP #######################
 
-
-# decode host template
-host_template_decoded=Base64.decode64(host_template)
-# create xml object
-xml=Nokogiri::Slop(host_template_decoded)
-# retrieve necessary data for fencing command from host template
-ipmi_ip=xml.HOST.TEMPLATE.IPMI_IP.content
-ipmi_user=xml.HOST.TEMPLATE.IPMI_USER.content
-ipmi_pass=xml.HOST.TEMPLATE.IPMI_PASS.content
-
+# DEBUG EXIT!!!
+#exit 0
 
 if repeat
     # Retrieve host monitor interval
@@ -165,7 +177,7 @@ end
 
 
 # the actual fencing command
-fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l X"+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
+fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
 
 fence_try=0
 while fence_try < fence_max_retries
