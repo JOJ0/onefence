@@ -2,6 +2,7 @@
 
 # -------------------------------------------------------------------------- #
 # Copyright 2002-2015, OpenNebula Project (OpenNebula.org), C12G Labs        #
+# Copyright 2016, LINFORGE Technologies GmbH (www.linforge.com)              #
 #                                                                            #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may    #
 # not use this file except in compliance with the License. You may obtain    #
@@ -59,16 +60,14 @@ require 'getoptlong'
 # needed for executing shell commands
 require "CommandManager"
 
-# for parsing host template and reading xml
-require 'base64'
-require 'nokogiri'
+# for debugging
 require 'pp'
 
 # logging to syslog
 require 'syslog'
 
 def slog(message)
-    Syslog.open("OpenNebula "+$0.split("/").last, Syslog::LOG_PID | Syslog::LOG_CONS) { |s| s.notice message }
+    Syslog.open("ONE "+$0.split("/").last,Syslog::LOG_PID|Syslog::LOG_CONS) { |s| s.notice message }
 end
 
 if !(host_id=ARGV[0])
@@ -81,8 +80,10 @@ if !(host_template=ARGV[1])
 end
 
 mode   = "-r" # By default, recreate VMs
-force  = "n"  # By default, don't recreate/delete suspended VMs
-repeat = nil  # By default, don't wait for monitorization cycles"
+#force  = "n"  # By default, don't recreate/delete suspended VMs
+force  = "false"  # false in 5.2 script
+#repeat = nil  # By default, don't wait for monitorization cycles"
+repeat = 2  #�new default in ONE 5.2 script
 
 opts = GetoptLong.new(
             ['--migrate',  '-m',GetoptLong::NO_ARGUMENT],
@@ -111,6 +112,10 @@ rescue Exception => e
     exit(-1)
 end
 
+################################################################################
+# Main
+################################################################################
+
 begin
     client = Client.new()
 rescue Exception => e
@@ -118,13 +123,26 @@ rescue Exception => e
     exit -1
 end
 
+sys  = OpenNebula::System.new(client)
+conf = sys.get_configuration
+
 # Retrieve hostname
 host  =  OpenNebula::Host.new_with_id(host_id, client)
 rc = host.info
 exit -1 if OpenNebula.is_error?(rc)
 host_name = host.name
 
-# Retrieve ipmi data for fencing operation (retrieve_elements returns array), if incomplete log error and exit 
+slog("#{host_name}(#{host_id}) NOTICE: host hook launched")
+
+# Retrieve host monitor interval
+begin
+    MONITORING_INTERVAL = conf['MONITORING_INTERVAL'] || 60
+rescue Exception => e
+    slog("#{host_name}(#{host_id}) ERROR: Could not get MONITORING_INTERVAL")
+    exit -1
+end
+
+# Retrieve ipmi data from host template (retrieve_elements returns array), if incomplete log error and exit 
 ipmi_ip=host.retrieve_elements("//HOST/TEMPLATE/IPMI_IP")
 ipmi_user=host.retrieve_elements("//HOST/TEMPLATE/IPMI_USER")
 ipmi_pass=host.retrieve_elements("//HOST/TEMPLATE/IPMI_PASS")
@@ -133,19 +151,17 @@ if ipmi_ip == nil or ipmi_user == nil or ipmi_pass == nil
     slog("#{host_name}(#{host_id}) ERROR: node is about to be fenced, but ipmi data in host template is incomplete! ipmi_ip=#{ipmi_ip.to_s}, ipmi_user=#{ipmi_user.to_s}, ipmi_pass=#{ipmi_pass.to_s}")
     exit 1
 else
-    slog("#{host_name}(#{host_id}) NOTICE: node is going to be fenced. ipmi_ip=#{ipmi_ip.to_s}, ipmi_user=#{ipmi_user.to_s}, ipmi_pass=#{ipmi_pass.to_s}")
+    slog("#{host_name}(#{host_id}) WARNING: node is going to be fenced. ipmi_ip=#{ipmi_ip.to_s}, ipmi_user=#{ipmi_user.to_s}, ipmi_pass=#{ipmi_pass.to_s}")
     ipmi_ip=ipmi_ip[0].to_s
     ipmi_user=ipmi_user[0].to_s
     ipmi_pass=ipmi_pass[0].to_s
 end
 
-
-#
 #xpath = "/VM_POOL/VM[#{state}]/HISTORY_RECORDS/HISTORY[HOSTNAME=\"#{host.name}\" and last()]"
 #vm_ids_array = vms.retrieve_elements("#{xpath}/../../ID")
 
 #### configure fencing START ######################
-# which fence agent to use, FIXME check if fence_ipmilan is installed (binary exists?)
+# which fence agent to use
 fence_agent="/usr/sbin/fence_ipmilan"
 # retry fence action this many times if unsucessful
 fence_max_retries=3
@@ -153,41 +169,50 @@ fence_max_retries=3
 fence_retry_wait=10
 # onoff or cycle
 fence_method="cycle"
-# -T Wait X seconds after on/off operation (Default Value: 2), set to 4 for HP iLO 3
+# --power-wait (was -T), wait X seconds after on/off operation (Default Value: 2), set to 4 for HP iLO 3
 fence_wait="4"
-# fence_timeout (-t Timeout (sec) for IPMI operation)
+# --power-timeout (was -t), timeout (sec) for IPMI operation
 fence_timeout="5"
 #### configure fencing STOP #######################
 
-# DEBUG EXIT!!!
-#exit 0
-
-if repeat
-    # Retrieve host monitor interval
-    monitor_interval = nil
-    File.readlines(CONFIG_FILE).each{|line|
-         monitor_interval = line.split("=").last.to_i if /MONITORING_INTERVAL/=~line
-    }
-    # Sleep through the desired number of monitor interval
-    sleep (repeat * monitor_interval)
-
-    # If the host came back, exit! avoid duplicated VMs
-    exit 0 if host.state != 3
+# check wether fence_agent is installed
+if !File.file?(fence_agent)
+    slog("#{host_name}(#{host_id}) NOTICE: #{fence_agent} not installed, exiting!")
+    exit 1
 end
 
+if repeat
+    #Sleep through the desired number of monitor interval
+    period = repeat * MONITORING_INTERVAL.to_i
+    slog("#{host_name}(#{host_id}) NOTICE: waiting #{repeat} monitoring cycles (#{period} seconds total)")
+    sleep(period)
+
+    # If the host came back, log and exit! avoid duplicated VMs
+    if host.state != 3 && host.state != 5
+      slog("#{host_name}(#{host_id}) WARNING: node came back, fencing operation aborted!")
+      exit 0 
+    end
+end
 
 # the actual fencing command
-fence_cmd=LocalCommand.new(fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -v -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout)
+fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -m "+fence_method+" --power-wait="+fence_wait+" --power-timeout "+fence_timeout
+
+slog("#{host_name}(#{host_id}) NOTICE: fencing cmd: #{fence_cmdline} ")
+fence_cmd=LocalCommand.new(fence_cmdline)
+
+# debug exit
+#exit 0
 
 fence_try=0
 while fence_try < fence_max_retries
 
     fence_cmd.run
 
-    if fence_cmd.stdout.include?("Failed")
-        slog("#{host_name}(#{host_id}) ERROR: fencing command not successful, output was: "+fence_cmd.stdout)
+    if fence_cmd.stdout.downcase.include?("failed") || fence_cmd.stderr.downcase.include?("error")
+        slog("#{host_name}(#{host_id}) ERROR: fencing not successful, stdout was: #{fence_cmd.stdout}, stderr was: #{fence_cmd.stderr}")
     else
-        slog("#{host_name}(#{host_id}) NOTICE: node was fenced, output was: "+fence_cmd.stdout)
+        slog("#{host_name}(#{host_id}) NOTICE: node was fenced, stdout was: #{fence_cmd.stdout}, stderr was: #{fence_cmd.stderr}")
+	# FIXME double check if host was definitely power cycled
         break
     end
 
@@ -205,6 +230,9 @@ vms = VirtualMachinePool.new(client)
 rc = vms.info_all
 exit -1 if OpenNebula.is_error?(rc)
 
+# STATE=3: ACTIVE (LCM unknown)
+# STATE=5: SUSPENDED
+# STATE=8: POWEROFF
 
 state = "STATE=3"
 state += " or STATE=5" if force == "y"
@@ -226,3 +254,5 @@ if vm_ids_array
     end
 end
 
+slog("#{host_name}(#{host_id}) NOTICE: host hook finished")
+exit 0
