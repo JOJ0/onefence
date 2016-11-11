@@ -149,7 +149,7 @@ ipmi_pass=host.retrieve_elements("//HOST/TEMPLATE/IPMI_PASS")
 
 if ipmi_ip == nil or ipmi_user == nil or ipmi_pass == nil
     slog("#{host_name}(#{host_id}) ERROR: node is about to be fenced, but ipmi data in host template is incomplete! ipmi_ip=#{ipmi_ip.to_s}, ipmi_user=#{ipmi_user.to_s}, ipmi_pass=#{ipmi_pass.to_s}")
-    exit 1
+    exit -1
 else
     slog("#{host_name}(#{host_id}) WARNING: node is going to be fenced. ipmi_ip=#{ipmi_ip.to_s}, ipmi_user=#{ipmi_user.to_s}, ipmi_pass=#{ipmi_pass.to_s}")
     ipmi_ip=ipmi_ip[0].to_s
@@ -178,7 +178,7 @@ fence_timeout="5"
 # check wether fence_agent is installed
 if !File.file?(fence_agent)
     slog("#{host_name}(#{host_id}) NOTICE: #{fence_agent} not installed, exiting!")
-    exit 1
+    exit -1
 end
 
 if repeat
@@ -195,12 +195,16 @@ if repeat
 end
 
 # the actual fencing command
-fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -m "+fence_method+" --power-wait="+fence_wait+" --power-timeout "+fence_timeout
+# Ubuntu 14.04
+fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout
+# Ubuntu 16.04
+#fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -m "+fence_method+" --power-wait="+fence_wait+" --power-timeout "+fence_timeout
 
 slog("#{host_name}(#{host_id}) NOTICE: fencing cmd: #{fence_cmdline} ")
 fence_cmd=LocalCommand.new(fence_cmdline)
 
 # debug exit
+#slog("#{host_name}(#{host_id}) WARNING: debug exit, host hook finished")
 #exit 0
 
 fence_try=0
@@ -208,12 +212,15 @@ while fence_try < fence_max_retries
 
     fence_cmd.run
 
-    if fence_cmd.stdout.downcase.include?("failed") || fence_cmd.stderr.downcase.include?("error")
-        slog("#{host_name}(#{host_id}) ERROR: fencing not successful, stdout was: #{fence_cmd.stdout}, stderr was: #{fence_cmd.stderr}")
-    else
+    #Ubuntu 14.04 successful looks like this:
+    #stdout was: Rebooting machine @ IPMI:148.198.181.11...Done#012, stderr was: ExitCode: 255
+
+    if fence_cmd.stdout.include?("Rebooting") #&& fence_cmd.stderr.include?("Done")
         slog("#{host_name}(#{host_id}) NOTICE: node was fenced, stdout was: #{fence_cmd.stdout}, stderr was: #{fence_cmd.stderr}")
 	# FIXME double check if host was definitely power cycled
         break
+    else
+        slog("#{host_name}(#{host_id}) ERROR: fencing not successful, stdout was: #{fence_cmd.stdout}, stderr was: #{fence_cmd.stderr}")
     end
 
     fence_try+=1
@@ -245,13 +252,32 @@ if vm_ids_array
         vm.info
 
         if mode == "-r"
+	    slog("#{host_name}(#{host_id}) NOTICE: deleting VM #{vm_id.to_s}...")
             vm.delete(true)
         elsif mode == "-d"
+	    slog("#{host_name}(#{host_id}) NOTICE: deleting VM #{vm_id.to_s}...")
             vm.delete
         elsif mode == "-m"
+	    slog("#{host_name}(#{host_id}) NOTICE: rescheduling VM #{vm_id.to_s}...")
             vm.resched
+	    # Recover with failure (0), success (1), retry (2), delete (3), delete-recreate (4)
+	    slog("#{host_name}(#{host_id}) NOTICE: VM #{vm_id.to_s} lcm_state is #{vm.lcm_state}, status is #{vm.status}")
+	    if vm.lcm_state == 16
+	        slog("#{host_name}(#{host_id}) NOTICE: recovering VM #{vm_id.to_s}...")
+	        #slog("#{host_name}(#{host_id}) NOTICE: please manually recover VM #{vm_id.to_s}...")
+                vm.recover(0)
+                sleep 5
+                vm.recover(2)
+            else
+	        slog("#{host_name}(#{host_id}) NOTICE: won't recover VM #{vm_id.to_s}, please recover manually, lcm_state is #{vm.lcm_state}")
+            end
+        else
+	    slog("#{host_name}(#{host_id}) ERROR: unknown mode '#{mode}'")
+	    exit -1
         end
     end
+else
+    slog("#{host_name}(#{host_id}) NOTICE: no VMs found '#{mode}'")
 end
 
 slog("#{host_name}(#{host_id}) NOTICE: host hook finished")
