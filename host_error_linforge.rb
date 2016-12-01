@@ -67,7 +67,7 @@ require 'pp'
 require 'syslog'
 
 def slog(message)
-    Syslog.open("ONE "+$0.split("/").last,Syslog::LOG_PID|Syslog::LOG_CONS) { |s| s.notice message }
+    Syslog.open($0.split("/").last,Syslog::LOG_PID|Syslog::LOG_CONS) { |s| s.notice message }
 end
 
 if !(host_id=ARGV[0])
@@ -163,6 +163,10 @@ end
 #### configure fencing START ######################
 # which fence agent to use
 fence_agent="/usr/sbin/fence_ipmilan"
+# which fence-agents package version is the agent from?
+# Ubuntu 14.04: 3.1.5-2ubuntu4 -> 3
+# Ubuntu 16.04: 4.0.22-2 -> 4
+fence_agent_version=4
 # retry fence action this many times if unsucessful
 fence_max_retries=3
 # wait this many seconds between retries
@@ -196,9 +200,13 @@ end
 
 # the actual fencing command
 # Ubuntu 14.04
-fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout
+if fence_agent_version == 3
+  fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout
+end
 # Ubuntu 16.04
-#fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -m "+fence_method+" --power-wait="+fence_wait+" --power-timeout "+fence_timeout
+if fence_agent_version == 4
+  fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o off -m "+fence_method+" --power-wait="+fence_wait+" --power-timeout "+fence_timeout
+end
 
 slog("#{host_name}(#{host_id}) NOTICE: fencing cmd: #{fence_cmdline} ")
 fence_cmd=LocalCommand.new(fence_cmdline)
@@ -211,11 +219,14 @@ fence_try=0
 while fence_try < fence_max_retries
 
     fence_cmd.run
+    pp fence_cmd.methods
 
     #Ubuntu 14.04 successful looks like this:
-    #stdout was: Rebooting machine @ IPMI:148.198.181.11...Done#012, stderr was: ExitCode: 255
-
-    if fence_cmd.stdout.include?("Rebooting") #&& fence_cmd.stderr.include?("Done")
+    #stdout was: Rebooting machine @ IPMI:148.198.181.11...Done#012,
+    #stderr was: ExitCode: 255
+    #Ubuntu 16.04 successful returns proper exit code
+    if (fence_agent_version == 3 && fence_cmd.stdout.include?("Done")) || 
+      (fence_agent_version == 4 && fence_cmd.code == 0) 
         slog("#{host_name}(#{host_id}) NOTICE: node was fenced, stdout was: #{fence_cmd.stdout}, stderr was: #{fence_cmd.stderr}")
 	# FIXME double check if host was definitely power cycled
         break
@@ -252,25 +263,19 @@ if vm_ids_array
         vm.info
 
         if mode == "-r"
-	    slog("#{host_name}(#{host_id}) NOTICE: deleting VM #{vm_id.to_s}...")
+	    slog("#{host_name}(#{host_id}) NOTICE: deleting VM #{vm_id.to_s}")
             vm.delete(true)
         elsif mode == "-d"
-	    slog("#{host_name}(#{host_id}) NOTICE: deleting VM #{vm_id.to_s}...")
+	    slog("#{host_name}(#{host_id}) NOTICE: deleting VM #{vm_id.to_s}")
             vm.delete
         elsif mode == "-m"
-	    slog("#{host_name}(#{host_id}) NOTICE: rescheduling VM #{vm_id.to_s}...")
+	    slog("#{host_name}(#{host_id}) NOTICE: rescheduling VM #{vm_id.to_s}")
             vm.resched
+	    #slog("#{host_name}(#{host_id}) NOTICE: VM #{vm_id.to_s} lcm_state is #{vm.lcm_state} (#{vm.lcm_state_str})")
+
 	    # Recover with failure (0), success (1), retry (2), delete (3), delete-recreate (4)
-	    slog("#{host_name}(#{host_id}) NOTICE: VM #{vm_id.to_s} lcm_state is #{vm.lcm_state}, status is #{vm.status}")
-	    if vm.lcm_state == 16
-	        slog("#{host_name}(#{host_id}) NOTICE: recovering VM #{vm_id.to_s}...")
-	        #slog("#{host_name}(#{host_id}) NOTICE: please manually recover VM #{vm_id.to_s}...")
-                vm.recover(0)
-                sleep 5
-                vm.recover(2)
-            else
-	        slog("#{host_name}(#{host_id}) NOTICE: won't recover VM #{vm_id.to_s}, please recover manually, lcm_state is #{vm.lcm_state}")
-            end
+	    #slog("#{host_name}(#{host_id}) NOTICE: trying to recover --retry VM #{vm_id.to_s}")
+            #vm.recover(2)
         else
 	    slog("#{host_name}(#{host_id}) ERROR: unknown mode '#{mode}'")
 	    exit -1
