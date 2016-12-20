@@ -74,11 +74,6 @@ if !(host_id=ARGV[0])
     exit -1
 end
 
-# we're getting IPMI credentials from $TEMPLATE (see host failure configuration in oned.conf)
-if !(host_template=ARGV[1])
-	exit -1
-end
-
 mode   = "-r" # By default, recreate VMs
 #force  = "n"  # By default, don't recreate/delete suspended VMs
 force  = "false"  # false in 5.2 script
