@@ -156,6 +156,8 @@ end
 #vm_ids_array = vms.retrieve_elements("#{xpath}/../../ID")
 
 #### configure fencing START ######################
+# debug option, when set (1) no fencing occurs, always assumes fencing successful
+debug=0
 # which fence agent to use
 fence_agent="/usr/sbin/fence_ipmilan"
 # which fence-agents package version is the agent from?
@@ -163,11 +165,13 @@ fence_agent="/usr/sbin/fence_ipmilan"
 # Ubuntu 16.04: 4.0.22-2 -> 4
 fence_agent_version=4
 # retry fence action this many times if unsucessful
-fence_max_retries=3
+fence_max_retries=10
 # wait this many seconds between retries
 fence_retry_wait=10
+# fencing action: on, off or reboot
+fence_action="reboot"
 # onoff or cycle
-fence_method="cycle"
+fence_method="onoff"
 # --power-wait (was -T), wait X seconds after on/off operation (Default Value: 2), set to 4 for HP iLO 3
 fence_wait="4"
 # --power-timeout (was -t), timeout (sec) for IPMI operation
@@ -191,16 +195,17 @@ if repeat
       slog("#{host_name}(#{host_id}) WARNING: node came back, fencing operation aborted!")
       exit 0 
     end
+      slog("#{host_name}(#{host_id}) WARNING: node did not come back, node state is: #{host.state} ")
 end
 
 # the actual fencing command
 # Ubuntu 14.04
 if fence_agent_version == 3
-  fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o reboot -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout
+  fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o "+fence_action+" -M "+fence_method+" -T "+fence_wait+" -t "+fence_timeout
 end
 # Ubuntu 16.04
 if fence_agent_version == 4
-  fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o off -m "+fence_method+" --power-wait="+fence_wait+" --power-timeout "+fence_timeout
+  fence_cmdline=fence_agent+" -a "+ipmi_ip+" -P -l "+ipmi_user+" -p "+ipmi_pass+" -o "+fence_action+" -m "+fence_method+" --power-wait="+fence_wait+" --power-timeout "+fence_timeout
 end
 
 slog("#{host_name}(#{host_id}) NOTICE: fencing cmd: #{fence_cmdline} ")
@@ -213,8 +218,7 @@ fence_cmd=LocalCommand.new(fence_cmdline)
 fence_try=0
 while fence_try < fence_max_retries
 
-    fence_cmd.run
-    pp fence_cmd.methods
+    fence_cmd.run unless (debug == 1)
 
     #Ubuntu 14.04 successful looks like this:
     #stdout was: Rebooting machine @ IPMI:148.198.181.11...Done#012,
@@ -224,6 +228,9 @@ while fence_try < fence_max_retries
       (fence_agent_version == 4 && fence_cmd.code == 0) 
         slog("#{host_name}(#{host_id}) NOTICE: node was fenced, stdout was: #{fence_cmd.stdout}, stderr was: #{fence_cmd.stderr}")
 	# FIXME double check if host was definitely power cycled
+        break
+    elsif (debug == 1)
+        slog("#{host_name}(#{host_id}) WARNING: debug option enabled, fencing always assumed successful")
         break
     else
         slog("#{host_name}(#{host_id}) ERROR: fencing not successful, stdout was: #{fence_cmd.stdout}, stderr was: #{fence_cmd.stderr}")
@@ -277,7 +284,7 @@ if vm_ids_array
         end
     end
 else
-    slog("#{host_name}(#{host_id}) NOTICE: no VMs found '#{mode}'")
+    slog("#{host_name}(#{host_id}) NOTICE: no VMs found, mode: '#{mode}'")
 end
 
 slog("#{host_name}(#{host_id}) NOTICE: host hook finished")
