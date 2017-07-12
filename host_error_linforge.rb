@@ -184,19 +184,27 @@ if !File.file?(fence_agent)
     exit -1
 end
 
-if repeat
+while repeat > 0 do
     #Sleep through the desired number of monitor interval
-    period = repeat * MONITORING_INTERVAL.to_i
-    slog("#{host_name}(#{host_id}) NOTICE: waiting #{repeat} monitoring cycles (#{period} seconds total)")
+    period = MONITORING_INTERVAL.to_i
+    slog("#{host_name}(#{host_id}) NOTICE: waiting #{repeat} more monitoring cycles")
     sleep(period)
+
+    rc = host.info
+    if OpenNebula.is_error?(rc)
+        slog("#{host_name}(#{host_id}) ERROR: could not get current host info, fencing operation aborted!")
+        exit_error
+    end
 
     # If the host came back, log and exit! avoid duplicated VMs
     if host.state != 3 && host.state != 5
       slog("#{host_name}(#{host_id}) WARNING: node came back, fencing operation aborted!")
       exit 0 
     end
-      slog("#{host_name}(#{host_id}) WARNING: node did not come back, node state is: #{host.state} ")
+    repeat = repeat - 1
 end
+
+slog("#{host_name}(#{host_id}) WARNING: node did not come back, node state is: #{host.state} ")
 
 # the actual fencing command
 # Ubuntu 14.04
